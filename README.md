@@ -11,6 +11,9 @@ console):
 
 	ec2 start NICKNAME
 
+(This will also automatically add the new IP address to your ~/.ssh/config, if
+you have one)
+
 Modify the instance type (e.g. from t2.nano to t2.small) of an instance by
 nickname:
 
@@ -26,7 +29,7 @@ supply this flag or the tool won't be able to find it.
 
 ## Dependencies
 
-1. AWS CLI 
+### AWS CLI 
 
 On OS X: 
 
@@ -37,7 +40,7 @@ executable to your path):
 
 	sudo pip install --upgrade awscli
 
-2. gnu-sed
+### gnu-sed
 
 On OS X:
 
