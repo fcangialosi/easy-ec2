@@ -55,3 +55,7 @@ You will need to specify your Access Key ID and Secret Access Key. These can be
 found in the [AWS IAM Management
 Console](https://console.aws.amazon.com/iam/home?#/home). If you haven't
 already, you may need to create a new user here to get the proper keys.
+
+## Install
+
+Just copy the executable to a directory in your PATH, e.g. `/usr/local/bin`

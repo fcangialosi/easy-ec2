@@ -49,7 +49,9 @@ change_type.add_argument('nickname',
         help="Nickname of instance to modify")
 change_type.add_argument('new_type',
         help="New instance type, e.g. t2.nano")
-change_type.set_defaults(subparser='change_type')
+change_type.add_argument('--restart', action='store_true', dest="restart",
+    help="If the instance is already running, stop it, change the type, then restart it")
+change_type.set_defaults(subparser='change_type',restart=False)
 
 args = parser.parse_args()
 
@@ -252,11 +254,30 @@ elif args.subparser == "stop":
 
 elif args.subparser == "change_type":
     state,public_ip,itype,iid = find_by_nickname(args.nickname)
+    if args.restart and state == "running":
+        print "==> Stopping instance..."
+        os.system("aws ec2 stop-instances --instance-id {}".format(iid))
+        state = "stopping"
+    if state == "stopping":
+        print "==> Waiting for instance to stop..."
+        while state != "stopped":
+            sleep(3)
+            state,public_ip = describe(iid)
     if state != "stopped":
         print "==> {} is currently {}. Must be stopped first (use ec2 stop [NAME]).".format(args.nickname, state)
         sys.exit(-1)
     print "==> Changing instance type of {} to {}".format(args.nickname, args.new_type)
     change_instance_type(iid,args.new_type)
+    sleep(1)
+    print "==> Restarting instance..."
+    os.system("aws ec2 start-instances --instance-id {}".format(iid))
+    print("==> Waiting for public IP address to be assigned...")
+    public_ip = None
+    while not public_ip:
+        sleep(3)
+        _,public_ip = describe(iid)
+    print "==> {} assigned public ip {}".format(args.nickname, public_ip)
+    update_ssh_config(args.nickname, public_ip)
     print "==> Done"
 
 # Put things back the way we found them
