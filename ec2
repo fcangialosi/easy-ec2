@@ -1,0 +1,264 @@
+#!/usr/bin/python
+
+"""
+OS X: probably need to do the following before running this...
+
+brew install aws
+brew install gnu-sed
+
+Author:  Frank Cangialosi <frankc@csail.mit.edu>
+Created: February 22, 2017
+"""
+
+import sys,os
+import shutil
+import argparse
+from subprocess import check_output
+from json import loads,dumps
+from time import sleep
+from pprint import pprint
+
+config = os.path.expanduser('~/.aws/ids')
+aws_config = os.path.expanduser('~/.aws/config')
+aws_creds = os.path.expanduser('~/.aws/credentials')
+
+###############################################################################
+# Parse command-line args
+###############################################################################
+parser = argparse.ArgumentParser()
+parser.add_argument('--region',
+    help="EC2 Region (default from ~/.aws/config)")
+subparsers = parser.add_subparsers()
+
+ls = subparsers.add_parser('ls', help="List all EC2 instances")
+ls.set_defaults(subparser='ls', all=False)
+
+start = subparsers.add_parser('start', help="Start a terminated EC2 instance by nickname")
+start.add_argument('nickname',
+        help="Nickname of instance to start")
+start.set_defaults(subparser='start')
+
+stop = subparsers.add_parser('stop', help="Stop a running EC2 instance by nickname")
+stop.add_argument('nickname',
+        help="Nickname of instance to stop")
+stop.set_defaults(subparser='stop')
+
+change_type = subparsers.add_parser('change-type',
+    help="Change instance type (instance must be stopped first)")
+change_type.add_argument('nickname',
+        help="Nickname of instance to modify")
+change_type.add_argument('new_type',
+        help="New instance type, e.g. t2.nano")
+change_type.set_defaults(subparser='change_type')
+
+args = parser.parse_args()
+
+###############################################################################
+# Check paths
+###############################################################################
+# Make sure AWS config files exist
+if not (os.path.exists(aws_config) and os.path.exists(aws_creds)):
+    os.system("aws configure")
+
+# Make sure output type is set to json
+os.system("sed -i '' 's/output = .*/output = json/g' {}".format(aws_config))
+
+# Make sure our own config exists
+if not os.path.exists(config):
+    os.system("touch ~/.aws/ids")
+
+# If user specified a region, change it in their ~/.aws/config (temporarily)
+# and then change it back at the end
+# hacky, but only way to do it afaik
+default_region = None
+if 'region' in args and args.region:
+    with open(aws_config,'r') as f:
+        for l in f:
+            if 'region' in l:
+                _,default_region = l.strip().split("=")
+        default_region = default_region.strip()
+    if default_region:
+        os.system("sed -i '' 's/region = .*/region = {}/g' {}".format(args.region, aws_config))
+    
+###############################################################################
+# AWS EC2 CLI Helpers
+###############################################################################
+
+def change_instance_type(iid, new_type):
+    cmd = ('aws ec2 modify-instance-attribute --instance-id %s --instance-type "{\\\"Value\\\": \\\"%s\\\"}"' % (iid,new_type))
+    os.system(cmd)
+
+def describe(iid):
+    try:
+        resp = check_output(
+            "aws ec2 describe-instances --instance-ids {}".format(iid),
+            shell=True
+        )
+    except:
+        return "",""
+    instance, state, public_ip = None, None, None
+    try:
+        resp = loads(resp)
+        instance = resp['Reservations'][0]['Instances'][0]
+    except:
+        sys.exit("Failed to parse json response. Is your output set to json?")
+    try:
+        state = instance['State']['Name']
+    except:
+        sys.exit("Could not parse state")
+    try:
+        public_ip = instance['PublicIpAddress']
+    except:
+        pass
+    return state,public_ip
+
+def get_tag(tag, kvs):
+    for kv in kvs:
+        if tag == kv['Key']:
+            return kv['Value']
+    return None
+
+def find_by_nickname(nickname):
+    state,public_ip,itype,iid = None,None,None,None
+    try:
+        resp = check_output(
+            "aws ec2 describe-instances --filter \"Name=tag-value,Values={}\"".format(nickname),
+            shell=True
+        )
+    except:
+        return state,public_ip,itype,iid
+    resp = loads(resp)
+    instances = resp['Reservations'][0]['Instances']
+    if len(instances) > 1:
+        print "==> Found more than 1 instance with name {}:".format(nickname)
+        for instance in instances:
+            print get_tag('Name', instance['Tags'])
+    instance = instances[0]
+    try:
+        state = instance['State']['Name']
+    except:
+        pass
+    try:
+        public_ip = instance['PublicIpAddress']
+    except:
+        pass
+    try:
+        itype = instance['InstanceType']
+    except:
+        pass
+    try:
+        iid = instance['InstanceId']
+    except:
+        pass
+    return state,public_ip,itype,iid
+
+def get_all():
+    entries = []
+    try:
+        resp = check_output(
+            "aws ec2 describe-instances",
+            shell=True
+        )
+    except:
+        return entries
+    resp = loads(resp)
+    reservations = resp['Reservations']
+    for res in reservations:
+        instance = res['Instances'][0]
+        nickname = ""
+        try:
+            nickname = get_tag('Name', instance['Tags'])
+        except:
+            pass
+        state = instance['State']['Name']
+        public_ip = ""
+        try:
+            public_ip = instance['PublicIpAddress']
+        except:
+            pass
+        itype = instance['InstanceType']
+        iid = instance['InstanceId']
+        entries.append((nickname,state,public_ip,itype,iid))
+    return entries
+
+def update_ssh_config(nickname, ip):
+    if os.path.exists(os.path.expanduser('~/.ssh/config')):
+        print "==> Updating ~/.ssh/config"
+        cmd = "sed -i '' -e '/%s/{' -e 'n;s/HostName .*/HostName %s/' -e '}' ~/.ssh/config" % (nickname, ip)
+        os.system(cmd)
+    else:
+        print "==> ~/.ssh/config does not exist. Ignoring..."
+
+def make_table(entries):
+    lens = [8,5,9,4,12]
+    for (nickname,state,public_ip,itype,iid) in entries:
+        lens[0] = max(lens[0],len(nickname))
+        lens[1] = max(lens[1],len(state))
+        lens[2] = max(lens[2],len(public_ip))
+        lens[3] = max(lens[3],len(itype))
+        lens[4] = max(lens[4],len(iid))
+    print "{}|{}|{}|{}|{}".format(
+        "nickname".center(lens[0]+4),
+        "state".center(lens[1]+4),
+        "public_ip".center(lens[2]+4),
+        "type".center(lens[3]+4),
+        "instance-id".center(lens[4]+4)
+    )
+    print ("=" * (sum(lens) + 4*5 + 4))
+    for (nickname,state,public_ip,itype,iid) in entries:
+        print "{}|{}|{}|{}|{}".format(
+            nickname.center(lens[0]+4),
+            state.center(lens[1]+4),
+            public_ip.center(lens[2]+4),
+            itype.center(lens[3]+4),
+            iid.center(lens[4]+4)
+        )
+    print ("=" * (sum(lens) + 4*5 + 4))
+
+###############################################################################
+# Commands
+###############################################################################
+if args.subparser == "ls":
+    entries = get_all()
+    make_table(entries)
+
+elif args.subparser == "start":
+    state,public_ip,itype,iid = find_by_nickname(args.nickname)
+    if state == "running":
+        if public_ip:
+            print "==> {} is already running @ {}".format(args.nickname,public_ip)
+            update_ssh_config(args.nickname, public_ip)
+        else:
+            print "==> {} is already running, but does not have a public ip!".format(args.nickname)
+        sys.exit(0)
+    elif state == "stopped":
+        os.system("aws ec2 start-instances --instance-id {}".format(iid))
+        print("==> Waiting for public IP address to be assigned...")
+        public_ip = None
+        while not public_ip:
+            sleep(3)
+            _,public_ip = describe(iid)
+        print "==> {} assigned public ip {}".format(args.nickname, public_ip)
+        update_ssh_config(args.nickname, public_ip)
+        print "==> Done"
+
+elif args.subparser == "stop":
+    state,public_ip,itype,iid = find_by_nickname(args.nickname)
+    if state == "stopped":
+        print "==> {} is already stopped.".format(args.nickname)
+    else:
+        os.system("aws ec2 stop-instances --instance-id {}".format(iid))
+        print "==> Done"
+
+elif args.subparser == "change_type":
+    state,public_ip,itype,iid = find_by_nickname(args.nickname)
+    if state != "stopped":
+        print "==> {} is currently {}. Must be stopped first (use ec2 stop [NAME]).".format(args.nickname, state)
+        sys.exit(-1)
+    print "==> Changing instance type of {} to {}".format(args.nickname, args.new_type)
+    change_instance_type(iid,args.new_type)
+    print "==> Done"
+
+# Put things back the way we found them
+if default_region:
+    os.system("sed -i '' 's/region = .*/region = {}/g' {}".format(default_region, aws_config))
