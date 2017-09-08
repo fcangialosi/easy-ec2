@@ -53,6 +53,10 @@ change_type.add_argument('--restart', action='store_true', dest="restart",
     help="If the instance is already running, stop it, change the type, then restart it")
 change_type.set_defaults(subparser='change_type',restart=False)
 
+run_ssh = subparsers.add_parser('ssh', help="ssh into a running EC2 instance by nickname")
+run_ssh.add_argument('nickname', help='Nickname of instance')
+run_ssh.set_defaults(subparser='ssh')
+
 args = parser.parse_args()
 
 ###############################################################################
@@ -73,14 +77,24 @@ if not os.path.exists(config):
 # and then change it back at the end
 # hacky, but only way to do it afaik
 default_region = None
+override_region = None
+should_save_region = True
 if 'region' in args and args.region:
+    override_region = args.region
+else:
+    out = check_output("grep -i {} ~/.ssh/config -B1 | head -n1 | cut -d\" \" -f3".format(args.nickname), shell=True).strip()
+    if out != None and out != "":
+        override_region = out
+
+if override_region is not None:
+    should_save_region = True
     with open(aws_config,'r') as f:
         for l in f:
             if 'region' in l:
                 _,default_region = l.strip().split("=")
         default_region = default_region.strip()
     if default_region:
-        os.system("sed -i '' 's/region = .*/region = {}/g' {}".format(args.region, aws_config))
+        os.system("sed -i '' 's/region = .*/region = {}/g' {}".format(override_region, aws_config))
     
 ###############################################################################
 # AWS EC2 CLI Helpers
@@ -191,6 +205,14 @@ def update_ssh_config(nickname, ip):
     else:
         print "==> ~/.ssh/config does not exist. Ignoring..."
 
+def update_ssh_config_region(nickname, region):
+    if os.path.exists(os.path.expanduser('~/.ssh/config')):
+        print "==> Updating ~/.ssh/config"
+        cmd = "sed -i '' -e '/%s/{' -e 'n;s/HostName .*/HostName %s/' -e '}' ~/.ssh/config" % (nickname, ip)
+        os.system(cmd)
+    else:
+        print "==> ~/.ssh/config does not exist. Ignoring..."  
+
 def make_table(entries):
     lens = [8,5,9,4,12]
     for (nickname,state,public_ip,itype,iid) in entries:
@@ -252,6 +274,14 @@ elif args.subparser == "stop":
         os.system("aws ec2 stop-instances --instance-id {}".format(iid))
         print "==> Done"
 
+elif args.subparser == "ssh":
+    state,public_ip,itype,iid = find_by_nickname(args.nickname)
+    if state != "running":
+        print "==> Can't ssh to {} because it's not running.".format(args.nickname)
+    else:
+        os.execve("/usr/bin/ssh", ["/usr/bin/ssh", "ubuntu@"+public_ip], {})
+        print "==> SHOULD NOT REACH HERE"
+
 elif args.subparser == "change_type":
     state,public_ip,itype,iid = find_by_nickname(args.nickname)
     if args.restart and state == "running":
@@ -283,3 +313,11 @@ elif args.subparser == "change_type":
 # Put things back the way we found them
 if default_region:
     os.system("sed -i '' 's/region = .*/region = {}/g' {}".format(default_region, aws_config))
+if should_save_region:
+    curr_region = check_output("grep -i {} ~/.ssh/config -B1 | head -n1 | cut -d\" \" -f3".format(args.nickname), shell=True).strip()
+    if curr_region == "" or curr_region == None:
+        line = check_output("grep -n1 {} ~/.ssh/config | cut -f1 -d\":\"".format(args.nickname), shell=True)
+        os.systme("awk 'NR=={}\{$0=\"# Region {}\n\"$0\}1' > ~/.ssh/config.tmp".format(line, region_to_write))
+        os.system("mv ~/.ssh/config.tmp ~/.ssh/config")
+    elif curr_region != override_region:
+        os.system("")
