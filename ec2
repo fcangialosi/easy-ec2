@@ -22,6 +22,23 @@ config = os.path.expanduser('~/.aws/ids')
 aws_config = os.path.expanduser('~/.aws/config')
 aws_creds = os.path.expanduser('~/.aws/credentials')
 
+named_regions = {
+    'virginia' : 'us-east-1',
+    'ohio' : 'us-east-2',
+    'california' : 'us-west-1',
+    'oregon' : 'us-west-2',
+    'canada' : 'ca-central-1',
+    'ireland' : 'eu-west-1',
+    'frankfurt' : 'eu-central-1',
+    'london' : 'eu-west-2',
+    'singapore' : 'ap-southeast-1',
+    'sydney' : 'ap-southeast-2',
+    'seoul' : 'ap-northeast-2',
+    'tokyo' : 'ap-northeast-1',
+    'mumbai' : 'ap-south-1',
+    'brazil' : 'sa-east-1'
+}
+
 ###############################################################################
 # Parse command-line args
 ###############################################################################
@@ -81,6 +98,8 @@ override_region = None
 should_save_region = True
 if 'region' in args and args.region:
     override_region = args.region
+    if override_region in named_regions:
+        override_region = named_regions[override_region]
 else:
     out = check_output("grep -i {} ~/.ssh/config -B1 | head -n1 | cut -d\" \" -f3".format(args.nickname), shell=True).strip()
     if out != None and out != "":
