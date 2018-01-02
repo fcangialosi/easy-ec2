@@ -332,11 +332,12 @@ elif args.subparser == "change_type":
 # Put things back the way we found them
 if default_region:
     os.system("sed -i '' 's/region = .*/region = {}/g' {}".format(default_region, aws_config))
-if should_save_region:
-    curr_region = check_output("grep -i {} ~/.ssh/config -B1 | head -n1 | cut -d\" \" -f3".format(args.nickname), shell=True).strip()
-    if curr_region == "" or curr_region == None:
-        line = check_output("grep -n1 {} ~/.ssh/config | cut -f1 -d\":\"".format(args.nickname), shell=True)
-        os.systme("awk 'NR=={}\{$0=\"# Region {}\n\"$0\}1' > ~/.ssh/config.tmp".format(line, region_to_write))
-        os.system("mv ~/.ssh/config.tmp ~/.ssh/config")
-    elif curr_region != override_region:
-        os.system("")
+
+#if should_save_region:
+#    curr_region = check_output("grep -i {} ~/.ssh/config -B1 | head -n1 | cut -d\" \" -f3".format(args.nickname), shell=True).strip()
+#    if curr_region == "" or curr_region == None:
+#        line = check_output("grep -n1 {} ~/.ssh/config | cut -f1 -d\":\"".format(args.nickname), shell=True)
+#        os.system("awk 'NR=={}\{$0=\"# Region {}\n\"$0\}1' > ~/.ssh/config.tmp".format(line, region_to_write))
+#        os.system("mv ~/.ssh/config.tmp ~/.ssh/config")
+#    elif curr_region != override_region:
+#        os.system("")
